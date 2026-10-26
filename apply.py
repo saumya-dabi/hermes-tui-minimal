@@ -19,6 +19,8 @@ What it does to the Hermes TUI source (ui-tui/src):
 
 Each patch is an exact-string anchor against upstream; if upstream changes a
 file, apply.py prints which anchor no longer matches instead of guessing.
+An anchor may be a tuple of alternatives, so one apply.py can serve both the
+current stable release and a newer upstream wording.
 
 The TUI rebuilds itself from source on the next launch when these files change.
 
@@ -629,10 +631,13 @@ def main():
         for old, rep in patches:
             if rep in new:
                 continue  # already applied
-            if old not in new:
-                missing.append(f"{path.name}: {old.splitlines()[0].strip()[:70]}")
+            # `old` may be a tuple of alternative anchors (older/newer upstream wording)
+            olds = old if isinstance(old, tuple) else (old,)
+            hit = next((o for o in olds if o in new), None)
+            if hit is None:
+                missing.append(f"{path.name}: {olds[0].splitlines()[0].strip()[:70]}")
                 continue
-            new = new.replace(old, rep, 1)
+            new = new.replace(hit, rep, 1)
         if new != text:
             if "--check" in args:
                 changed.append(path.name)

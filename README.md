@@ -97,9 +97,13 @@ python3 verify/tui_render.py /tmp/t.turn.raw      # prints the screen, writes .p
 
 `tui_drive.py` runs the TUI in a pty (120×40) and records raw output; `APPLETERM=1` emulates Terminal.app over SSH (no `COLORTERM`, Apple_Terminal palette). `mockups/gen.py` renders the three markdown styles that were compared before "Editorial" was chosen.
 
+## Keeping up with upstream
+
+`check-upstream.sh` fetches `origin/main` and tests every anchor against it without touching your checkout: exit 0 and silent when fine, exit 1 with the list of anchors that the next `hermes update` would break. Cron it and alert on non-zero. When one breaks, add the new upstream wording as an alternative anchor — `old` may be a tuple `(old_text, new_text)`, so one `apply.py` serves both the current stable release and newer main.
+
 ## Known limits
 
-- Pinned to upstream as of commit `bf0203a79` (Oct 2026). Anchors are exact strings; when one breaks, `apply.py` prints `file: first line of anchor`. Fix the anchor, open an issue, or delete that patch.
+- Anchors verified against stable `v0.22.5` (`bf0203a79`) and `origin/main` `daec3cd4c` (26 Oct 2026). Anchors are exact strings; when one breaks, `apply.py` prints `file: first line of anchor`. Fix the anchor, open an issue, or delete that patch.
 - Upstream test `appChromeBlockedTimers.test.tsx` fails with the patches applied (it asserts the face ticker and idle clock that are removed). `markdown*.test.ts` assert the old glyphs.
 - `quiet-ansi` is TUI-only: the classic CLI (`display.interface: cli`) expects hex colours.
 - Code-block fill uses `ansi256(235)`; terminals without 256-colour support show no fill (set `code_bg: ""` to disable).
