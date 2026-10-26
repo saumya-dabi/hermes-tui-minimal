@@ -1,0 +1,15 @@
+# The `display:` keys hermes-tui-minimal relies on (merge into ~/.hermes/config.yaml).
+display:
+  interface: tui
+  skin: quiet-ansi
+  tui_statusbar: bottom      # strip under the prompt rule
+  tui_native: false          # full-screen mode (prompt pinned at the bottom)
+  tui_compact: true
+  mouse_tracking: all        # wheel scroll + click-to-cursor + drag-select
+  resume_display: minimal
+  status_bar:
+    fields: [model, context_detail, git_branch]   # extras from apply.py: cost, turn_time, git_branch, hints
+  turn_summary: false
+  turn_completion_explainer: false
+  credits_notices: false
+  details_mode: collapsed

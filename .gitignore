@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.raw
+*.raw.html
+*.raw.png

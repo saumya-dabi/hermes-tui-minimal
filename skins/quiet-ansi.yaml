@@ -1,0 +1,68 @@
+name: quiet-ansi
+description: Minimal — uses your terminal profile's own 16 ANSI colours (follows the terminal theme), high contrast, no ASCII art
+
+# Every colour here is a terminal palette SLOT, not a fixed hex, so it follows
+# whatever colour scheme your terminal profile (macOS Terminal.app) defines.
+# Body text uses the profile's own foreground (empty string = no colour set).
+#   text: profile fg · headings: whiteBright · accent: cyan · secondary: white
+#   borders: blackBright · ok green · warn yellow · error redBright
+# Avoids ansi:blue / blueBright: Terminal.app's default blues are unreadable on black.
+# Diff colours stay hex (Python renders inline diffs and needs hex).
+colors:
+  ui_text: ""
+  banner_text: ""
+  prompt: ""
+  ui_primary: "ansi:whiteBright"
+  banner_title: "ansi:whiteBright"
+  ui_accent: "ansi:cyan"
+  banner_accent: "ansi:cyan"
+  ui_tool: "ansi:white"             # running-tool rows: quieter than the cyan accent (links/branch/picker)
+  ui_label: "ansi:white"
+  banner_dim: "ansi:white"
+  ui_thinking: "ansi:blackBright"   # reasoning recedes behind the reply
+  ui_border: "ansi:blackBright"
+  banner_border: "ansi:blackBright"
+  input_rule: "ansi:blackBright"
+  response_border: "ansi:blackBright"
+  session_label: "ansi:white"
+  session_border: "ansi:blackBright"
+  ui_ok: "ansi:green"
+  ui_warn: "ansi:yellow"
+  ui_error: "ansi:redBright"
+  status_bar_text: "ansi:white"
+  status_bar_strong: "ansi:whiteBright"
+  status_bar_dim: "ansi:white"
+  status_bar_good: "ansi:green"
+  status_bar_warn: "ansi:yellow"
+  status_bar_bad: "ansi:redBright"
+  status_bar_critical: "ansi:redBright"
+  shell_dollar: "ansi:green"
+  # code blocks
+  syntax_string: "ansi:green"
+  syntax_number: "ansi:yellow"
+  syntax_keyword: "ansi:magentaBright"
+  syntax_comment: "ansi:blackBright"
+  # fills: selected row / menus (237 = #3a3a3a, fixed 256-grey: subtle bar, text stays readable)
+  completion_menu_current_bg: "ansi256(237)"
+  completion_menu_meta_current_bg: "ansi256(237)"
+  selection_bg: "ansi256(237)"
+  code_bg: "ansi256(235)"          # code-block fill (hermes-minimal-ui patch #17)
+
+# No face/emoji in front of the thinking verb (empty frame).
+spinner:
+  waiting_faces: [""]
+  thinking_faces: [""]
+  thinking_verbs: ["thinking", "working"]
+
+branding:
+  agent_name: Hermes
+  prompt_symbol: "›"
+  welcome: ""
+  goodbye: "bye"
+  help_header: "Commands"
+
+tool_prefix: "│"
+
+# One-line logo and a single-dot hero instead of the big ASCII art.
+banner_logo: "[bold]hermes[/]"
+banner_hero: "·"

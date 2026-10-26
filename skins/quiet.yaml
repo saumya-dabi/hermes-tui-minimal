@@ -1,0 +1,60 @@
+name: quiet
+description: Minimal — calm Nord-style slate with a frost-cyan accent, one-line header, no ASCII art
+
+# Palette (dark terminal):
+#   text #D8DEE9 · title #ECEFF4 · accent #88C0D0 (frost cyan) · secondary #8C96A8
+#   borders #434C5E · selection chip #2F4A5F · ok #A3BE8C · warn #EBCB8B · error #E57F89
+colors:
+  banner_border: "#434C5E"
+  banner_title: "#ECEFF4"
+  banner_accent: "#88C0D0"
+  banner_dim: "#8C96A8"
+  banner_text: "#D8DEE9"
+  ui_primary: "#ECEFF4"
+  ui_accent: "#88C0D0"
+  ui_tool: "#81A1C1"
+  ui_thinking: "#7B8494"
+  ui_label: "#B8C2D0"
+  ui_text: "#D8DEE9"
+  ui_border: "#434C5E"
+  ui_ok: "#A3BE8C"
+  ui_warn: "#EBCB8B"
+  ui_error: "#E57F89"
+  prompt: "#88C0D0"
+  input_rule: "#434C5E"
+  response_border: "#434C5E"
+  status_bar_bg: "#1F232B"
+  status_bar_text: "#A0A9B8"
+  status_bar_strong: "#E5E9F0"
+  status_bar_dim: "#636D7E"
+  status_bar_good: "#A3BE8C"
+  status_bar_warn: "#EBCB8B"
+  status_bar_bad: "#D08770"
+  status_bar_critical: "#E57F89"
+  session_label: "#A0A9B8"
+  session_border: "#434C5E"
+  completion_menu_bg: "#222731"
+  completion_menu_current_bg: "#2F4A5F"
+  completion_menu_meta_bg: "#222731"
+  selection_bg: "#2F4A5F"
+  shell_dollar: "#88C0D0"
+  voice_status_bg: "#1F232B"
+
+# No face/emoji in front of the thinking verb (empty frame).
+spinner:
+  waiting_faces: [""]
+  thinking_faces: [""]
+  thinking_verbs: ["thinking", "working"]
+
+branding:
+  agent_name: Hermes
+  prompt_symbol: "›"
+  welcome: ""
+  goodbye: "bye"
+  help_header: "Commands"
+
+tool_prefix: "│"
+
+# One-line logo and a single-dot hero instead of the big ASCII art.
+banner_logo: "[bold #ECEFF4]hermes[/]"
+banner_hero: "[#434C5E]·[/]"
