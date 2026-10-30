@@ -25,6 +25,9 @@ No fork. `apply.py` patches the Hermes checkout in place with exact-string ancho
 
 **macOS Terminal.app over SSH**
 - Copy-on-select works over SSH: a transcript drag or prompt-box drag is sent to your clipboard via OSC 52 with a `✓ copied N chars` notice (⌘C can't reach the app while the TUI owns the mouse; Fn+drag then ⌘C is the fallback).
+- Links over SSH: clicking a link copies its URL (`✓ link copied`) instead of running `xdg-open` on the server. Works for markdown label links (`[blog](url)`, whose URL is otherwise invisible on terminals without OSC 8) and for bare URLs that word-wrap across rows.
+- Pasting a URL that a native copy (Fn+drag, ⌘C) split at the wrap points (newline + indent) rejoins it into one link.
+- No colour emoji anywhere: replies, gateway notices, UI strings and glyphs (`⚡`, `✅`, `⏳`, `🔑` …) are stripped; text symbols such as `✓ ✗ ● ⚠` stay. Tests for these live in `tests/` (copy them into the checkout to run with vitest).
 - Fixes the stray `p` bottom-left and stale dots Terminal.app leaves behind.
 - The wrapper exports `TERM_PROGRAM=Apple_Terminal COLORFGBG=15;0` over SSH so the TUI applies its Terminal.app colour/redraw handling (SSH doesn't forward `TERM_PROGRAM`).
 
@@ -104,7 +107,7 @@ python3 verify/tui_render.py /tmp/t.turn.raw      # prints the screen, writes .p
 ## Known limits
 
 - Anchors verified against stable `v0.22.5` (`bf0203a79`) and `origin/main` `daec3cd4c` (26 Oct 2026). Anchors are exact strings; when one breaks, `apply.py` prints `file: first line of anchor`. Fix the anchor, open an issue, or delete that patch.
-- Upstream test `appChromeBlockedTimers.test.tsx` fails with the patches applied (it asserts the face ticker and idle clock that are removed). `markdown*.test.ts` assert the old glyphs.
+- Upstream test `appChromeBlockedTimers.test.tsx` fails with the patches applied (it asserts the face ticker and idle clock that are removed). `markdown*.test.ts` assert the old glyphs; `emoji.test.ts`, the StatusRule battery tests and one `/rollback` notice test assert emoji that patch 23 removes.
 - `quiet-ansi` is TUI-only: the classic CLI (`display.interface: cli`) expects hex colours.
 - Code-block fill uses `ansi256(235)`; terminals without 256-colour support show no fill (set `code_bg: ""` to disable).
 

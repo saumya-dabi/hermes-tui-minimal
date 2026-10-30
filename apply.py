@@ -14,6 +14,12 @@ What it does to the Hermes TUI source (ui-tui/src):
   6-16. Copy-on-select over SSH (OSC 52), Terminal.app redraw fixes, status
      strip extras (cost / turn time / git branch / hints), tool rows with
      green ✓ / red ✗, context as numbers only.
+  18-22. Links over SSH: clicking a link (markdown label or bare URL, even
+     when it word-wraps) copies the URL via OSC 52 instead of running xdg-open
+     on the server; a pasted URL that a native copy split at the wrap points is
+     rejoined; prompt-box copies show the "✓ copied" notice too.
+  23. No emoji anywhere: replies, gateway notices, UI strings and glyphs are
+     stripped of colour emoji (text symbols like ✓ ✗ ● ⚠ stay).
   17. "Editorial" reply markdown: distinct heading levels, shaded code blocks,
      accent bullets, quote bar, │ tables, inline-code chips (skin key code_bg).
 
@@ -202,9 +208,13 @@ PATCHES = {
             "          {busy ? (\n            <FaceTicker\n",
             "          {busy ? (\n            Boolean(1) /* hermes-minimal-ui */ ? null : <FaceTicker\n",
         ),
+        # 16/21. no " │ " before the model when idle, except after a notice ("✓ copied …│ model")
         (
-            "            {' │ '}\n            {modelText}\n",
-            "            {busy || status === 'ready' ? '' : ' │ ' /* hermes-minimal-ui */}\n            {modelText}\n",
+            (
+                "            {' │ '}\n            {modelText}\n",
+                "            {busy || status === 'ready' ? '' : ' │ ' /* hermes-minimal-ui */}\n            {modelText}\n",
+            ),
+            "            {busy || (status === 'ready' && !showNotice) ? '' : ' │ ' /* hermes-minimal-ui */}\n            {modelText}\n",
         ),
     ],
     # 6. Copy-on-select also for macOS Terminal.app over SSH (node runs on Linux,
@@ -284,8 +294,25 @@ PATCHES = {
     # 14b. Prompt-box drag-select auto-copies on Terminal.app over SSH too (upstream: macOS only).
     SRC / "textInput.tsx": [
         (
-            "    if (isMac && normalized) {\n      void writeClipboardText(vRef.current.slice(normalized.start, normalized.end))\n",
-            "    if (normalized && (isMac || (process.env.TERM_PROGRAM ?? '').trim() === 'Apple_Terminal') /* hermes-minimal-ui */) {\n      void writeClipboardText(vRef.current.slice(normalized.start, normalized.end))\n",
+            (
+                "    if (isMac && normalized) {\n      void writeClipboardText(vRef.current.slice(normalized.start, normalized.end))\n",
+                "    if (normalized && (isMac || (process.env.TERM_PROGRAM ?? '').trim() === 'Apple_Terminal') /* hermes-minimal-ui */) {\n      void writeClipboardText(vRef.current.slice(normalized.start, normalized.end))\n",
+            ),
+            "    if (normalized && (isMac || (process.env.TERM_PROGRAM ?? '').trim() === 'Apple_Terminal') /* hermes-minimal-ui */) {\n"
+            "      const copiedText = vRef.current.slice(normalized.start, normalized.end)\n\n"
+            "      // 22. same \"✓ copied\" notice as a transcript drag, so a prompt-box copy is visible too\n"
+            "      void writeClipboardText(copiedText).then(async ok => {\n"
+            "        if (ok) {\n"
+            "          const { turnController } = await import('../app/turnController.js')\n\n"
+            "          turnController.showNotice({\n"
+            "            key: 'copy.selection',\n"
+            "            kind: 'ttl',\n"
+            "            level: 'success',\n"
+            "            text: `✓ copied ${copiedText.length.toLocaleString()} chars · ⌘V to paste`,\n"
+            "            ttl_ms: 2500\n"
+            "          })\n"
+            "        }\n"
+            "      })\n",
         ),
     ],
     # 15. Finished tool rows: green ✓ / red ✗ instead of the same ● for every state.
@@ -605,6 +632,74 @@ PATCHES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 18-21: links over SSH (Terminal.app has no OSC 8; xdg-open would run on the server).
+# 18. Click on a link (markdown label link or bare URL) copies its URL via OSC 52 + notice.
+PATCHES.setdefault(SRC.parent / "entry.tsx", []).append(
+    ('  onHyperlinkClick: url => {\n    openExternalUrl(url)\n  }\n', "  onHyperlinkClick: url => {\n    // hermes-minimal-ui: over SSH the opener (xdg-open) runs on the SERVER, and Terminal.app has\n    // no OSC 8, so a click on a link copies its URL to the local clipboard (OSC 52) instead.\n    if (process.env.SSH_CONNECTION || process.env.SSH_TTY || process.env.SSH_CLIENT) {\n      void import('./lib/clipboard.js')\n        .then(({ writeClipboardText }) => writeClipboardText(url))\n        .then(async ok => {\n          if (ok) {\n            const { turnController } = await import('./app/turnController.js')\n\n            turnController.showNotice({\n              key: 'copy.selection',\n              kind: 'ttl',\n              level: 'success',\n              text: `✓ link copied · ⌘V to paste`,\n              ttl_ms: 2500\n            })\n          }\n        })\n        .catch(() => {})\n\n      return\n    }\n\n    openExternalUrl(url)\n  }\n"),
+)
+# 19. Plain-text URL click detection follows soft-wrapped rows (whole URL, not one row's piece).
+PATCHES.setdefault(ROOT / "ui-tui" / "packages" / "hermes-ink" / "src" / "ink" / "selection.ts", []).extend([
+    ('/**\n * Scan the screen buffer for a plain-text URL at (col, row).', "/* hermes-minimal-ui: the URL-char run around (col, row), joined across soft-wrapped rows.\n * Non-URL cells become ' ' so they act as boundaries; unwritten indent/gutter cells at the start\n * of a continuation row are skipped, exactly like selection copy does. */\nfunction urlRunAcrossWraps(screen: Screen, col: number, row: number): { clickIdx: number; token: string } {\n  const width = screen.width\n  const sw = screen.softWrap\n  const MAX_ROWS = 40\n  let top = row\n\n  while (top > 0 && sw[top]! > 0 && row - top < MAX_ROWS) {\n    top--\n  }\n\n  let bottom = row\n\n  while (bottom + 1 < screen.height && sw[bottom + 1]! > 0 && bottom - row < MAX_ROWS) {\n    bottom++\n  }\n\n  let line = ''\n  let clickIdx = -1\n\n  for (let r = top; r <= bottom; r++) {\n    const rowOff = r * width\n    const end = r + 1 < screen.height && sw[r + 1]! > 0 ? Math.min(sw[r + 1]!, width) : width\n    let x = 0\n\n    if (r > top) {\n      while (x < end && (screen.noSelect[rowOff + x] === 1 || !isWrittenCellAt(screen, x, r))) {\n        x++\n      }\n    }\n\n    for (; x < end; x++) {\n      if (r === row && x === col) {\n        clickIdx = line.length\n      }\n\n      const cell = screen.noSelect[rowOff + x] === 1 ? undefined : cellAt(screen, x, r)\n\n      line += cell && cell.width === CellWidth.Narrow && isUrlChar(cell.char) ? cell.char : ' '\n    }\n  }\n\n  if (clickIdx < 0 || line[clickIdx] === ' ') {\n    return { clickIdx: -1, token: '' }\n  }\n\n  let lo = clickIdx\n\n  while (lo > 0 && line[lo - 1] !== ' ') {\n    lo--\n  }\n\n  let hi = clickIdx\n\n  while (hi < line.length - 1 && line[hi + 1] !== ' ') {\n    hi++\n  }\n\n  return { clickIdx: clickIdx - lo, token: line.slice(lo, hi + 1) }\n}\n\n/**\n * Scan the screen buffer for a plain-text URL at (col, row)."),
+    ("  // Expand left/right to the bounds of the URL-char run. URLs are ASCII\n  // (CellWidth.Narrow, 1 codeunit), so hitting a non-ASCII/wide/spacer\n  // cell is a boundary — no need to step over spacers like wordBoundsAt.\n  let lo = c\n\n  while (lo > 0) {\n    const prev = lo - 1\n\n    if (noSelect[rowOff + prev] === 1) {\n      break\n    }\n\n    const pc = cellAt(screen, prev, row)\n\n    if (!pc || pc.width !== CellWidth.Narrow || !isUrlChar(pc.char)) {\n      break\n    }\n\n    lo = prev\n  }\n\n  let hi = c\n\n  while (hi < width - 1) {\n    const next = hi + 1\n\n    if (noSelect[rowOff + next] === 1) {\n      break\n    }\n\n    const nc = cellAt(screen, next, row)\n\n    if (!nc || nc.width !== CellWidth.Narrow || !isUrlChar(nc.char)) {\n      break\n    }\n\n    hi = next\n  }\n\n  let token = ''\n\n  for (let i = lo; i <= hi; i++) {\n    token += cellAt(screen, i, row)!.char\n  }\n\n  // 1 cell = 1 char across [lo, hi] (ASCII-only run), so string index =\n  // column offset. Find the last scheme anchor at or before the click —\n  // a run like `https://a.com,https://b.com` has two, and clicking the\n  // second should return the second URL, not the greedy match of both.\n  const clickIdx = c - lo\n", '  // hermes-minimal-ui: a URL that word-wraps continues on the next row(s) (screen.softWrap\n  // marks continuation rows). Read the whole logical line so a click gets the WHOLE URL.\n  const { clickIdx, token } = urlRunAcrossWraps(screen, c, row)\n'),
+])
+# 20. Pasting a URL that a native copy split at the wrap points (newline + indent) rejoins it.
+PATCHES.setdefault(SRC.parent / "lib" / "text.ts", []).append(
+    ('export const pasteTokenLabel = (text: string, lineCount: number) => {\n', "// hermes-minimal-ui: a link copied natively (Fn+drag, ⌘C) from a full-screen terminal app comes\n// back with its wrap points as hard newlines + indent. When the WHOLE paste is one URL split that\n// way, rejoin it. Non-final fragments must be long (a wrapped row) so 'https://a.com\\nthanks' stays.\nconst WRAPPED_URL_HEAD_RE = /^(?:https?|file):\\/\\/\\S+$/\nconst URL_SCHEME_RE = /^(?:https?|file):\\/\\//\n\nexport const rejoinWrappedUrl = (text: string): string => {\n  if (!/[\\r\\n]/.test(text)) {\n    return text\n  }\n\n  const parts = text\n    .split(/\\r?\\n|\\r/)\n    .map(s => s.trim())\n    .filter(Boolean)\n\n  if (parts.length < 2 || parts.length > 20 || !WRAPPED_URL_HEAD_RE.test(parts[0]!)) {\n    return text\n  }\n\n  if (parts.some(p => /\\s/.test(p)) || parts.slice(1).some(p => URL_SCHEME_RE.test(p))) {\n    return text\n  }\n\n  if (parts.slice(0, -1).some(p => p.length < 30)) {\n    return text\n  }\n\n  return parts.join('')\n}\n\nexport const pasteTokenLabel = (text: string, lineCount: number) => {\n"),
+)
+PATCHES.setdefault(SRC.parent / "app" / "useComposerState.ts", []).extend([
+    ("import { pasteTokenLabel, stripTrailingPasteNewlines } from '../lib/text.js'\n", "import { pasteTokenLabel, rejoinWrappedUrl, stripTrailingPasteNewlines } from '../lib/text.js' // hermes-minimal-ui\n"),
+    ('      const cleanedText = stripTrailingPasteNewlines(text)\n', '      const cleanedText = rejoinWrappedUrl(stripTrailingPasteNewlines(text)) /* hermes-minimal-ui */\n'),
+])
+
+
+# ---------------------------------------------------------------------------
+# 23. No emoji anywhere in the TUI (user request: no colour emoji).
+#     lib/emoji.ts gets stripEmoji/stripEmojiDeep; markdown's ensureEmojiPresentation now strips
+#     (it used to FORCE colour emoji with VS16); every gateway event + transcript-bearing RPC
+#     reply is deep-stripped; t() strings are stripped; ⚡/🔑/⏳ literals become text.
+PATCHES.setdefault(SRC.parent / "lib" / "emoji.ts", []).append(('export function ensureEmojiPresentation(text: string): string {\n  if (!text || !MAYBE_TEXT_EMOJI_RE.test(text)) {\n', "// hermes-minimal-ui #23: no emoji anywhere in the TUI. Strips colour-emoji (default emoji\n// presentation, VS16 sequences, ZWJ families, skin tones, keycaps) and tidies the space around them.\n// Text glyphs like ✓ ✗ ● ▸ │ › ⌘ ⚠ ☑ are kept.\nconst EMOJI_SEQ =\n  '(?:\\\\p{Emoji_Presentation}|\\\\p{Extended_Pictographic}\\\\uFE0F)(?:\\\\uFE0F|\\\\u20E3|\\\\p{Emoji_Modifier}|\\\\u200D\\\\p{Extended_Pictographic}\\\\uFE0F?)*'\nconst EMOJI_RUN_RE = new RegExp(`([ \\\\t]?)(?:${EMOJI_SEQ})+([ \\\\t]?)`, 'gu')\nconst HAS_EMOJI_RE = /[\\p{Emoji_Presentation}\\uFE0F\\u20E3]/u\n\nexport function stripEmoji(text: string): string {\n  if (!text || !HAS_EMOJI_RE.test(text)) {\n    return text\n  }\n\n  return text\n    .replace(EMOJI_RUN_RE, (_m: string, pre: string, post: string, offset: number, all: string) => {\n      if (pre) {\n        return post ? ' ' : '' // `a ⚡ b` -> `a b`, `done ✅` -> `done`\n      }\n\n      const lineStart = offset === 0 || all[offset - 1] === '\\n'\n\n      return lineStart ? '' : post // `⚡ Loading` -> `Loading`, `x⚡ y` -> `x y`\n    })\n    .replace(/[\\uFE0F\\u20E3]/g, '')\n}\n\nexport function stripEmojiDeep<T>(value: T): T {\n  if (typeof value === 'string') {\n    return stripEmoji(value) as T\n  }\n\n  if (Array.isArray(value)) {\n    let changed = false\n    const out = value.map(v => {\n      const next = stripEmojiDeep(v)\n\n      changed ||= next !== v\n\n      return next\n    })\n\n    return (changed ? out : value) as T\n  }\n\n  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {\n    let changed = false\n    const out: Record<string, unknown> = {}\n\n    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {\n      const next = stripEmojiDeep(v)\n\n      changed ||= next !== v\n      out[k] = next\n    }\n\n    return (changed ? out : value) as T\n  }\n\n  return value\n}\n\n/** Gateway replies that carry transcript text (resume/history, slash output). */\nexport const NO_EMOJI_METHODS = new Set(['session.resume', 'session.activate', 'slash.exec', 'command.dispatch', 'session.info', 'tools.show'])\n\nexport function ensureEmojiPresentation(text: string): string {\n  // hermes-minimal-ui #23: strip instead of forcing colour-emoji presentation\n  if (Boolean(1)) {\n    return stripEmoji(text)\n  }\n\n  if (!text || !MAYBE_TEXT_EMOJI_RE.test(text)) {\n"))
+PATCHES.setdefault(SRC.parent / "gatewayClient.ts", []).extend([
+    ("import { CircularBuffer } from './lib/circularBuffer.js'\n", "import { CircularBuffer } from './lib/circularBuffer.js'\nimport { NO_EMOJI_METHODS, stripEmojiDeep } from './lib/emoji.js' // hermes-minimal-ui\n"),
+    ('  private publish(ev: AnyGatewayEvent) {\n', '  private publish(ev: AnyGatewayEvent) {\n    ev = stripEmojiDeep(ev) // hermes-minimal-ui #23: no emoji in anything the gateway sends\n\n'),
+    ('  request<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {\n    const attachUrl = resolveGatewayAttachUrl()\n', '  request<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {\n    // hermes-minimal-ui #23: transcript-bearing replies (resume, slash output) come back emoji-free too\n    const pending = this.requestRaw<T>(method, params, timeoutMs)\n\n    return NO_EMOJI_METHODS.has(method) ? pending.then(v => stripEmojiDeep(v)) : pending\n  }\n\n  private requestRaw<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {\n    const attachUrl = resolveGatewayAttachUrl()\n'),
+])
+PATCHES.setdefault(SRC.parent / "i18n" / "runtime.ts", []).extend([
+    ("\nimport ", "\nimport { stripEmoji } from '../lib/emoji.js' // hermes-minimal-ui\nimport "),
+    ('export function t(key: TranslationKey, ...args: unknown[]): string {\n  return translateFrom(locale => (locale === DEFAULT_LOCALE ? en : $catalog.get()), $locale.get(), key, args)\n}\n', 'export function t(key: TranslationKey, ...args: unknown[]): string {\n  // hermes-minimal-ui #23: no emoji in UI strings\n  return stripEmoji(translateFrom(locale => (locale === DEFAULT_LOCALE ? en : $catalog.get()), $locale.get(), key, args))\n}\n'),
+])
+PATCHES.setdefault(SRC.parent / "domain" / "roles.ts", []).append(
+    ("glyph: '⚡'", "glyph: '·' /* hermes-minimal-ui #23 */"),
+)
+PATCHES.setdefault(SRC / "thinking.tsx", []).append(
+    ("rollupBits.push(`⚡${aggregate.activeCount}`)", "rollupBits.push(`${aggregate.activeCount} active` /* hermes-minimal-ui #23 */)"),
+)
+PATCHES.setdefault(SRC.parent / "lib" / "subagentTree.ts", []).append(
+    ("pieces.push(`⚡${totals.activeCount}`)", "pieces.push(`${totals.activeCount} active` /* hermes-minimal-ui #23 */)"),
+)
+PATCHES.setdefault(SRC.parent / "i18n" / "en" / "hubs.ts", []).extend([
+    ("`${count} agent · d${depth} · ⚡${active}`", "`${count} agent · d${depth} · ${active} active` /* hermes-minimal-ui #23 */"),
+    ("`${count} agents · d${depth} · ⚡${active}`", "`${count} agents · d${depth} · ${active} active` /* hermes-minimal-ui #23 */"),
+])
+PATCHES.setdefault(SRC / "appChrome.tsx", []).extend([
+    ("pieces.push(`⚡${widthLabel}${suffix}`)", "pieces.push(`run ${widthLabel}${suffix}` /* hermes-minimal-ui #23 */)"),
+    ("return `${info.plugged ? '⚡' : '🔋'} ${info.percent ?? '--'}%`", "return `${info.plugged ? 'charging' : 'battery'} ${info.percent ?? '--'}%` /* hermes-minimal-ui #23 */"),
+    ("const EMOJI_FRAMES = ['☤ ', '🌀', '🤔', '✨', '🍵', '🔮']", "const EMOJI_FRAMES = ['☤ ', '· ', '∙ ', '• ', '∙ ', '· '] /* hermes-minimal-ui #23 */"),
+])
+PATCHES.setdefault(SRC.parent / "app" / "slash" / "commands" / "core.ts", []).append(
+    ("r.plugged ? '⚡' : '🔋'", "r.plugged ? 'charging' : 'battery' /* hermes-minimal-ui #23 */"),
+)
+PATCHES.setdefault(SRC.parent / "content" / "fortunes.ts", []).append(
+    ("return `${rare ? '🌟' : '🔮'} ${bag[n % bag.length]}`", "return `${rare ? '★' : '·'} ${bag[n % bag.length]}` /* hermes-minimal-ui #23 */"),
+)
+PATCHES.setdefault(SRC / "maskedPrompt.tsx", []).append(
+    ("        {icon} {label}\n", "        {icon ? '' : '' /* hermes-minimal-ui #23: no 🔑/🔐 icon */}{label}\n"),
+)
+PATCHES.setdefault(SRC.parent / "app" / "useMainApp.ts", []).append(
+    ("? '⚠' : ui.busy ? '⏳' : '✓'", "? '⚠' : ui.busy ? '…' /* hermes-minimal-ui #23 */ : '✓'"),
+)
+
+
 def say(msg, quiet):
     if not quiet:
         print(msg)
@@ -613,10 +708,6 @@ def say(msg, quiet):
 def main():
     args = set(sys.argv[1:])
     quiet = "-q" in args
-
-    if not (ROOT / "ui-tui" / "src").is_dir():
-        print(f"[minimal-ui] no Hermes source checkout at {ROOT} (set HERMES_AGENT_ROOT)", file=sys.stderr)
-        return 1
 
     if "--revert" in args:
         files = [str(p.relative_to(ROOT)) for p in PATCHES]
@@ -654,7 +745,7 @@ def main():
         print(
             "[minimal-ui] Hermes TUI code changed upstream; could not re-apply:\n  "
             + "\n  ".join(missing)
-            + "\n  Fix the anchor in apply.py (or open an issue at github.com/saumya-dabi/hermes-tui-minimal).",
+            + "\n  Ask Hermes to update ~/.hermes/tui-minimal/apply.py.",
             file=sys.stderr,
         )
     if changed:
