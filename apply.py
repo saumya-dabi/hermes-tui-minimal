@@ -20,6 +20,9 @@ What it does to the Hermes TUI source (ui-tui/src):
      rejoined; prompt-box copies show the "✓ copied" notice too.
   23. No emoji anywhere: replies, gateway notices, UI strings and glyphs are
      stripped of colour emoji (text symbols like ✓ ✗ ● ⚠ stay).
+  24. Mac clipboard bridge: Terminal.app ignores OSC 52, so every copy also goes
+     through an SSH RemoteForward to a launchd+pbcopy agent on the Mac, which acks;
+     the copy notice says ✗ when the Mac didn't ack. See clipbridge/README.md.
   17. "Editorial" reply markdown: distinct heading levels, shaded code blocks,
      accent bullets, quote bar, │ tables, inline-code chips (skin key code_bg).
 
@@ -47,6 +50,41 @@ MARK = "hermes-minimal-ui"
 RULE = "<Text color={ui.theme.color.border}>{'─'.repeat(Math.max(1, composer.cols - 2)) /* hermes-minimal-ui */}</Text>"
 # TS helper block (cost / turn-time / hint labels) inserted into appChrome.tsx — patch 12.
 MINIMAL_HELPERS = (Path(__file__).resolve().parent / "appChrome.helpers.ts").read_text(encoding="utf-8")
+
+# Patch 13 replacement, before (V1) and after (V2) the #24 Mac clipboard bridge made it honest.
+_COPY_HEAD = (
+    "      lastCopiedVersionRef.current = version\n"
+    "      void selection.copySelectionNoClear().then(copied => {\n"
+    "        // hermes-minimal-ui: ⌘C never reaches the app while the TUI owns the mouse, so\n"
+    "        // say that the drag itself already copied (OSC 52) — otherwise it looks broken.\n"
+    "        if (copied) {\n"
+    "          turnController.showNotice({\n"
+    "            key: 'copy.selection',\n"
+    "            kind: 'ttl',\n"
+)
+_COPY_TAIL = (
+    "            ttl_ms: 2500\n"
+    "          })\n"
+    "        }\n"
+    "      })\n"
+    "    })\n  }, [selection])\n"
+)
+COPY_NOTICE_V1 = (
+    _COPY_HEAD
+    + "            level: 'success',\n"
+    "            text: `✓ copied ${copied.length.toLocaleString()} chars · ⌘V to paste`,\n"
+    + _COPY_TAIL
+)
+COPY_NOTICE_V2 = (
+    _COPY_HEAD
+    + "            // hermes-minimal-ui #24: honest result from the Mac clipboard bridge\n"
+    "            level: (globalThis as { __hermesClipBridge?: { ok: boolean } }).__hermesClipBridge?.ok === false ? 'warn' : 'success',\n"
+    "            text:\n"
+    "              (globalThis as { __hermesClipBridge?: { ok: boolean } }).__hermesClipBridge?.ok === false\n"
+    "                ? '✗ NOT copied: Mac clipboard link is down · reconnect SSH'\n"
+    "                : `✓ copied ${copied.length.toLocaleString()} chars · ⌘V to paste`,\n"
+    + _COPY_TAIL
+)
 
 PATCHES = {
     SRC / "appLayout.tsx": [
@@ -242,22 +280,11 @@ PATCHES = {
         # 13. "✓ copied N chars" notice after a drag-select (⌘C can't reach the app while
         #     the TUI owns the mouse, so make the auto-copy visible).
         (
-            "      lastCopiedVersionRef.current = version\n      void selection.copySelectionNoClear()\n    })\n  }, [selection])\n",
-            "      lastCopiedVersionRef.current = version\n"
-            "      void selection.copySelectionNoClear().then(copied => {\n"
-            "        // hermes-minimal-ui: ⌘C never reaches the app while the TUI owns the mouse, so\n"
-            "        // say that the drag itself already copied (OSC 52) — otherwise it looks broken.\n"
-            "        if (copied) {\n"
-            "          turnController.showNotice({\n"
-            "            key: 'copy.selection',\n"
-            "            kind: 'ttl',\n"
-            "            level: 'success',\n"
-            "            text: `✓ copied ${copied.length.toLocaleString()} chars · ⌘V to paste`,\n"
-            "            ttl_ms: 2500\n"
-            "          })\n"
-            "        }\n"
-            "      })\n"
-            "    })\n  }, [selection])\n",
+            (
+                "      lastCopiedVersionRef.current = version\n      void selection.copySelectionNoClear()\n    })\n  }, [selection])\n",
+                COPY_NOTICE_V1,
+            ),
+            COPY_NOTICE_V2,
         ),
         # 12. git branch reaches the status strip as its own prop
         (
@@ -621,7 +648,7 @@ PATCHES = {
     ROOT / "hermes_cli" / "inventory.py": [
         # model_catalog.excluded_providers also hides `providers:` config rows
         # (upstream only filters built-in rows), so the picker shows just the
-        # providers you keep.
+        # providers the user keeps.
         (
             "    if explicit_only:\n        rows = _filter_explicit_provider_rows(rows, ctx)\n",
             "    _excl = {str(p).strip().lower() for p in (ctx.excluded_providers or []) if p}  # hermes-minimal-ui\n"
@@ -697,6 +724,52 @@ PATCHES.setdefault(SRC / "maskedPrompt.tsx", []).append(
 )
 PATCHES.setdefault(SRC.parent / "app" / "useMainApp.ts", []).append(
     ("? '⚠' : ui.busy ? '⏳' : '✓'", "? '⚠' : ui.busy ? '…' /* hermes-minimal-ui #23 */ : '✓'"),
+)
+
+# 24. Mac clipboard bridge (Terminal.app ignores OSC 52 — proven live 30 Oct). Every copy path also
+#     sends the text through the SSH RemoteForward 127.0.0.1:47052 -> Mac launchd -> pbcopy, which
+#     acks "OK". A failed ack turns the copy notice into a visible warning instead of a fake ✓.
+#     Mac/VM setup + tests: clipbridge/README.md.
+CLIP_BRIDGE = (Path(__file__).resolve().parent / "clipBridge.helpers.ts").read_text(encoding="utf-8")
+PATCHES.setdefault(ROOT / "ui-tui" / "packages" / "hermes-ink" / "src" / "ink" / "termio" / "osc.ts", []).extend([
+    (
+        "export async function setClipboard(text: string): Promise<ClipboardResult> {\n"
+        "  const b64 = Buffer.from(text, 'utf8').toString('base64')\n",
+        CLIP_BRIDGE
+        + "export async function setClipboard(text: string): Promise<ClipboardResult> {\n"
+        "  const b64 = Buffer.from(text, 'utf8').toString('base64')\n"
+        "  const bridged = await sendClipBridge(text) // hermes-minimal-ui #24\n",
+    ),
+    (
+        "  const success = nativeAttempted || tmuxBufferLoaded || sequence.length > 0\n",
+        "  const success = bridged === true || nativeAttempted || tmuxBufferLoaded || sequence.length > 0 // hermes-minimal-ui #24\n",
+    ),
+])
+PATCHES.setdefault(SRC.parent / "lib" / "osc52.ts", []).append(
+    (
+        "export const writeOsc52Clipboard = (s: string) => {\n"
+        "  const sequence = `${ESC}]52;c;${Buffer.from(s, 'utf8').toString('base64')}${BEL}`\n",
+        CLIP_BRIDGE
+        + "export const writeOsc52Clipboard = (s: string) => {\n"
+        "  // hermes-minimal-ui #24: also deliver through the Mac clipboard bridge; if the Mac never\n"
+        "  // acks, replace the caller's \"✓ copied\" notice with a warning (same notice key).\n"
+        "  void sendClipBridge(s).then(ok => {\n"
+        "    if (ok === false) {\n"
+        "      void import('../app/turnController.js')\n"
+        "        .then(({ turnController }) =>\n"
+        "          turnController.showNotice({\n"
+        "            key: 'copy.selection',\n"
+        "            kind: 'ttl',\n"
+        "            level: 'warn',\n"
+        "            text: '✗ NOT copied: Mac clipboard link is down · reconnect SSH',\n"
+        "            ttl_ms: 6000\n"
+        "          })\n"
+        "        )\n"
+        "        .catch(() => {})\n"
+        "    }\n"
+        "  })\n"
+        "  const sequence = `${ESC}]52;c;${Buffer.from(s, 'utf8').toString('base64')}${BEL}`\n",
+    ),
 )
 
 

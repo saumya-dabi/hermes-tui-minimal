@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Copy text to the Mac clipboard through the Hermes clipboard bridge.
+
+  echo hi | hermes-clip        # copy stdin
+  hermes-clip some words       # copy args
+  hermes-clip --status         # is the Mac side reachable? (copies nothing... sends a probe)
+
+Exit 0 only when the Mac answered OK (pbcopy really ran). Setup: ~/.hermes/clipbridge/README.md
+"""
+import os, socket, sys
+
+PORT = int(os.environ.get("HERMES_CLIP_BRIDGE_PORT", "47052"))
+
+
+def send(data: bytes, timeout=3.0) -> str:
+    try:
+        s = socket.create_connection(("127.0.0.1", PORT), timeout=timeout)
+    except OSError as e:
+        return f"no listener on VM 127.0.0.1:{PORT} ({e.strerror or e}) - SSH session has no RemoteForward"
+    try:
+        s.sendall(data)
+        s.shutdown(socket.SHUT_WR)
+        reply = b""
+        while True:
+            chunk = s.recv(64)
+            if not chunk:
+                break
+            reply += chunk
+        return "OK" if b"OK" in reply else "forward up but the Mac did not answer (launchd agent not installed/loaded)"
+    except OSError as e:
+        return f"error: {e}"
+    finally:
+        s.close()
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] == ["--status"]:
+        data = b"hermes-clip status probe"
+    elif args:
+        data = " ".join(args).encode()
+    else:
+        data = sys.stdin.buffer.read()
+    res = send(data)
+    if res == "OK":
+        print("copied to Mac clipboard" if args[:1] != ["--status"] else "bridge OK (Mac clipboard now holds a probe string)", file=sys.stderr)
+        return 0
+    print(f"NOT copied: {res}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
